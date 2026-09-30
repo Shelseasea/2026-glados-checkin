@@ -2,46 +2,59 @@ name: GLaDOS 2026 Checkin
 
 on:
   schedule:
-    # 北京时间 9:30 (UTC 1:30)
+    # 北京时间 09:30（UTC 01:30）。一天一次即可，脚本会在失败时自动重试。
     - cron: '30 1 * * *'
-    # 北京时间 21:30 (UTC 13:30)
-    - cron: '30 13 * * *'
-  workflow_dispatch:  # 允许手动触发
-  push:
-    branches: [main]  # 推送时也触发，保持活跃
+  workflow_dispatch:
+    inputs:
+      dispatch_source:
+        description: 手动运行请选择 manual；外部定时器可不填（默认按 external）
+        required: false
+        default: external
+        type: choice
+        options:
+          - manual
+          - external
+
+concurrency:
+  group: glados-checkin
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   checkin:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.dispatch_source == '' || inputs.dispatch_source == 'manual' || inputs.dispatch_source == 'external'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
 
       - name: Install Dependencies
-        run: pip install -r requirements.txt
+        run: python -m pip install -r requirements.txt
+
+      - name: Run Tests
+        run: python -m unittest discover -s tests -v
 
       - name: Run Checkin
         run: python checkin.py
-        timeout-minutes: 5
+        timeout-minutes: 8
         env:
           GLADOS_COOKIE: ${{ secrets.GLADOS_COOKIE }}
+          # Must match the browser that created the current gld:sess.
+          GLADOS_USER_AGENT: ${{ vars.GLADOS_USER_AGENT }}
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PUSH_LEVEL: ${{ vars.PUSH_LEVEL || 'all' }}
+          CHECKIN_MAX_ATTEMPTS: '3'
+          CHECKIN_RETRY_DELAY_SECONDS: '60'
 
-      - name: Retry on Failure
-        if: failure()
-        run: |
-          echo "First attempt failed, retrying in 60s..."
-          sleep 60
-          python checkin.py
-        timeout-minutes: 5
-        env:
-          GLADOS_COOKIE: ${{ secrets.GLADOS_COOKIE }}
-          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
